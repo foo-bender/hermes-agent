@@ -4835,9 +4835,11 @@ def _signal_reconnect_and_wait(
         if reconnect_event is not None and hasattr(reconnect_event, "set"):
             reconnect_event.set()
 
+    safe_server_name = _sanitize_error(server_name)
+    safe_op_description = _sanitize_error(op_description)
     logger.info(
         "MCP server '%s': %s requesting transport reconnect",
-        server_name, op_description,
+        safe_server_name, safe_op_description,
     )
     loop.call_soon_threadsafe(_request_reconnect)
     return _wait_for_server_session_ready(
@@ -4972,6 +4974,9 @@ def _handle_auth_error_and_retry(
     if not _is_auth_error(exc):
         return None
 
+    safe_server_name = _sanitize_error(server_name)
+    safe_op_description = _sanitize_error(op_description)
+
     from tools.mcp_oauth_manager import get_manager
     manager = get_manager()
 
@@ -4983,7 +4988,7 @@ def _handle_auth_error_and_retry(
     except Exception as rec_exc:
         logger.warning(
             "MCP OAuth '%s': recovery attempt failed: %s",
-            server_name, _safe_exc_str(rec_exc),
+            safe_server_name, _safe_exc_str(rec_exc),
         )
         recovered = False
 
@@ -5022,7 +5027,7 @@ def _handle_auth_error_and_retry(
         except Exception as retry_exc:
             logger.warning(
                 "MCP %s/%s retry after auth recovery failed: %s",
-                server_name, op_description, _safe_exc_str(retry_exc),
+                safe_server_name, safe_op_description, _safe_exc_str(retry_exc),
             )
 
     # No recovery available, or retry also failed: surface a structured
@@ -5173,6 +5178,9 @@ def _handle_session_expired_and_retry(
     if not _is_session_expired_error(exc):
         return None
 
+    safe_server_name = _sanitize_error(server_name)
+    safe_op_description = _sanitize_error(op_description)
+
     with _lock:
         srv = _servers.get(server_name)
     if srv is None or not hasattr(srv, "_reconnect_event"):
@@ -5185,7 +5193,7 @@ def _handle_session_expired_and_retry(
     logger.info(
         "MCP server '%s': %s failed with session-expired error (%s); "
         "signalling transport reconnect and retrying once.",
-        server_name, op_description, _safe_exc_str(exc),
+        safe_server_name, safe_op_description, _safe_exc_str(exc),
     )
 
     # Trigger the same reconnect mechanism the OAuth recovery path
@@ -5199,7 +5207,7 @@ def _handle_session_expired_and_retry(
         logger.warning(
             "MCP server '%s': reconnect did not ready within 15s after "
             "session-expired error; falling through to error response.",
-            server_name,
+            safe_server_name,
         )
         return None
 
@@ -5216,7 +5224,7 @@ def _handle_session_expired_and_retry(
     except Exception as retry_exc:
         logger.warning(
             "MCP %s/%s retry after session reconnect failed: %s",
-            server_name, op_description, _safe_exc_str(retry_exc),
+            safe_server_name, safe_op_description, _safe_exc_str(retry_exc),
         )
     return None
 

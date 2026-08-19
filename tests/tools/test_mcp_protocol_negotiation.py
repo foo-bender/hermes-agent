@@ -7,6 +7,7 @@ the live-path integration is covered by the real-server E2E in the PR.
 """
 
 import asyncio
+import logging
 
 import pytest
 
@@ -66,6 +67,14 @@ def _run(coro):
     return asyncio.new_event_loop().run_until_complete(coro)
 
 
+def _assert_log_records_are_sanitized(records, *sentinels):
+    assert records
+    for record in records:
+        surfaces = (str(record.msg), repr(record.args), record.getMessage())
+        for sentinel in sentinels:
+            assert all(sentinel not in surface for surface in surfaces)
+
+
 class TestAutoMode:
     def test_handshake_first_no_discover_on_success(self):
         s = _Session(init="INIT_RESULT")
@@ -98,6 +107,25 @@ class TestAutoMode:
         with pytest.raises(asyncio.TimeoutError):
             _run(_task()._negotiate_session(_Hang(), 0.05))
 
+    def test_initialize_fallback_logs_sanitize_raw_record_fields(self, caplog):
+        task = MCPServerTask("server api_key=opaque-server-credential")
+        task._config = {"protocol": "mode token=opaque-mode-credential"}
+        session = _Session(
+            init=_Err(-32601, "password=opaque-initialize-credential"),
+            disc="DISC_RESULT",
+        )
+
+        with caplog.at_level(logging.INFO, logger="tools.mcp_tool"):
+            out = _run(task._negotiate_session(session, 5))
+
+        assert out == "DISC_RESULT"
+        _assert_log_records_are_sanitized(
+            caplog.records,
+            "opaque-server-credential",
+            "opaque-mode-credential",
+            "opaque-initialize-credential",
+        )
+
 
 class TestExplicitModes:
     def test_stateless_probes_discover_first(self):
@@ -111,6 +139,24 @@ class TestExplicitModes:
         out = _run(_task("stateless")._negotiate_session(s, 5))
         assert out == "INIT_RESULT"
         assert s.calls == ["discover", "initialize"]
+
+    def test_discover_fallback_logs_sanitize_raw_record_fields(self, caplog):
+        task = MCPServerTask("server client_secret=opaque-server-credential")
+        task._config = {"protocol": "stateless"}
+        session = _Session(
+            init="INIT_RESULT",
+            disc=_Err(-32601, "access_token=opaque-discover-credential"),
+        )
+
+        with caplog.at_level(logging.INFO, logger="tools.mcp_tool"):
+            out = _run(task._negotiate_session(session, 5))
+
+        assert out == "INIT_RESULT"
+        _assert_log_records_are_sanitized(
+            caplog.records,
+            "opaque-server-credential",
+            "opaque-discover-credential",
+        )
 
     def test_legacy_never_discovers(self):
         s = _Session(init=_Err(_JSONRPC_UNSUPPORTED_PROTOCOL_VERSION), disc="DISC_RESULT")

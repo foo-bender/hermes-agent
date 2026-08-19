@@ -21,6 +21,7 @@ from __future__ import annotations
 from datetime import datetime
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
+import weakref
 
 import pytest
 
@@ -35,6 +36,7 @@ def _make_source(
     user_id: str = "user1",
     chat_type: str = "dm",
     chat_id: str = "c1",
+    profile: str | None = None,
 ) -> SessionSource:
     return SessionSource(
         platform=platform,
@@ -42,6 +44,7 @@ def _make_source(
         chat_id=chat_id,
         user_name=f"name-{user_id}",
         chat_type=chat_type,
+        profile=profile,
     )
 
 
@@ -65,7 +68,10 @@ def _make_runner(*, platform_extra: dict | None = None,
     )
     adapter = MagicMock()
     adapter.send = AsyncMock()
+    adapter.config = runner.config.platforms[platform]
+    adapter.platform = platform
     runner.adapters = {platform: adapter}
+    runner._profile_adapters = {}
     runner._voice_mode = {}
     runner.hooks = SimpleNamespace(
         emit=AsyncMock(),
@@ -108,6 +114,76 @@ def _make_runner(*, platform_extra: dict | None = None,
     runner._capture_gateway_honcho_if_configured = lambda *args, **kwargs: None
     runner._emit_gateway_run_progress = AsyncMock()
     return runner
+
+
+def _make_multiplex_admin_runner():
+    runner = _make_runner(
+        platform_extra={"allow_admin_from": ["primary-admin"]},
+    )
+    secondary_config = PlatformConfig(
+        enabled=True,
+        token="***",
+        extra={"allow_admin_from": ["secondary-admin"]},
+    )
+    secondary_adapter = SimpleNamespace(
+        config=secondary_config,
+        platform=Platform.DISCORD,
+    )
+    runner._profile_adapters = {
+        "secondary": {Platform.DISCORD: secondary_adapter},
+    }
+    return runner
+
+
+def test_explicit_admin_uses_secondary_adapter_policy():
+    runner = _make_multiplex_admin_runner()
+
+    assert runner._caller_is_explicit_admin(
+        _make_source(user_id="secondary-admin", profile="secondary")
+    )
+
+
+def test_primary_only_admin_is_denied_through_secondary_source():
+    runner = _make_multiplex_admin_runner()
+
+    assert not runner._caller_is_explicit_admin(
+        _make_source(user_id="primary-admin", profile="secondary")
+    )
+
+
+def test_explicit_admin_fails_closed_for_unknown_adapter():
+    runner = _make_multiplex_admin_runner()
+
+    assert not runner._caller_is_explicit_admin(
+        _make_source(user_id="primary-admin", profile="missing")
+    )
+
+
+def test_explicit_admin_fails_closed_for_relay_transport():
+    runner = _make_multiplex_admin_runner()
+    relay_config = PlatformConfig(
+        enabled=True,
+        token="***",
+        extra={"allow_admin_from": ["primary-admin"]},
+    )
+    runner.adapters[Platform.RELAY] = SimpleNamespace(
+        config=relay_config,
+        platform=Platform.RELAY,
+    )
+    source = _make_source(user_id="primary-admin")
+    source.delivered_via_upstream_relay = True
+
+    assert not runner._caller_is_explicit_admin(source)
+
+
+def test_routed_source_requires_authoritative_local_transport_policy():
+    runner = _make_multiplex_admin_runner()
+    source = _make_source(user_id="primary-admin", profile="routed-runtime")
+
+    assert not runner._caller_is_explicit_admin(source)
+
+    source._transport_adapter_ref = weakref.ref(runner.adapters[Platform.DISCORD])
+    assert runner._caller_is_explicit_admin(source)
 
 
 # ---------------------------------------------------------------------------

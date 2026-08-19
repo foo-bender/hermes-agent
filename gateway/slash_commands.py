@@ -1120,25 +1120,27 @@ class GatewaySlashCommandsMixin:
         privileged data access must require a real, configured admin.
         """
         try:
-            from gateway.config import GatewayConfig, Platform, PlatformConfig
+            from gateway.config import Platform, PlatformConfig
             from gateway.slash_access import (
                 canonical_scope_for_chat_type,
-                policy_for_source,
+                policy_from_extra,
             )
 
             platform = getattr(source, "platform", None)
-            if not isinstance(self.config, GatewayConfig) or not isinstance(
-                platform, Platform
-            ):
+            if not isinstance(platform, Platform):
                 return False
-            platform_config = self.config.platforms.get(platform)
+            adapter = self._adapter_for_source(source)
+            if adapter is None or getattr(adapter, "platform", None) is not platform:
+                return False
+            platform_config = getattr(adapter, "config", None)
             if not isinstance(platform_config, PlatformConfig):
                 return False
-            if canonical_scope_for_chat_type(
+            scope = canonical_scope_for_chat_type(
                 getattr(source, "chat_type", None)
-            ) is None:
+            )
+            if scope is None:
                 return False
-            policy = policy_for_source(self.config, source)
+            policy = policy_from_extra(platform_config.extra, scope)
             uid = getattr(source, "user_id", None)
             return bool(policy.enabled and uid and policy.is_admin(uid))
         except Exception:

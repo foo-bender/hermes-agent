@@ -1,6 +1,7 @@
 """Gateway access control for raw Kanban worker logs."""
 from __future__ import annotations
 
+from types import SimpleNamespace
 from typing import cast
 from unittest.mock import Mock
 
@@ -33,6 +34,13 @@ def _runner(
             )
         }
     )
+    runner.adapters = {
+        Platform.SLACK: SimpleNamespace(
+            config=runner.config.platforms[Platform.SLACK],
+            platform=Platform.SLACK,
+        )
+    }
+    runner._profile_adapters = {}
     return runner
 
 
@@ -215,7 +223,7 @@ async def test_worker_log_fails_closed_when_authorization_resolution_is_malforme
     def malformed_policy(*_args, **_kwargs):
         raise ValueError("synthetic malformed authorization")
 
-    monkeypatch.setattr("gateway.slash_access.policy_for_source", malformed_policy)
+    monkeypatch.setattr("gateway.slash_access.policy_from_extra", malformed_policy)
 
     result = await runner._handle_kanban_command(_event("admin"))
 

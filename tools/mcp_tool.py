@@ -2730,6 +2730,8 @@ class MCPServerTask:
         probe) work unchanged on either.
         """
         mode = str((self._config or {}).get("protocol", "auto")).lower().strip()
+        safe_name = _sanitize_error(self.name)
+        safe_mode = _sanitize_error(mode)
         if mode in ("stateless", "modern", "2026-07-28"):
             try:
                 return await asyncio.wait_for(
@@ -2743,7 +2745,7 @@ class MCPServerTask:
                 logger.info(
                     "MCP server '%s': server/discover rejected (%s) despite "
                     "protocol=%s — falling back to the legacy handshake",
-                    self.name, exc, mode,
+                    safe_name, _safe_exc_str(exc), safe_mode,
                 )
                 return await asyncio.wait_for(
                     session.initialize(), timeout=connect_timeout
@@ -2755,7 +2757,7 @@ class MCPServerTask:
         if mode != "auto":
             logger.warning(
                 "MCP server '%s': unknown protocol=%r — treating as 'auto' "
-                "(valid: auto, stateless, legacy)", self.name, mode,
+                "(valid: auto, stateless, legacy)", safe_name, safe_mode,
             )
         try:
             return await asyncio.wait_for(
@@ -2775,7 +2777,7 @@ class MCPServerTask:
             logger.info(
                 "MCP server '%s': legacy handshake rejected (%s) — "
                 "retrying via server/discover (2026-07-28 stateless server)",
-                self.name, exc,
+                safe_name, _safe_exc_str(exc),
             )
             return await asyncio.wait_for(
                 session.discover(), timeout=connect_timeout
